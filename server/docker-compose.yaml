@@ -60,7 +60,7 @@ services:
     networks:
       - mem0_network
     environment:
-      - NEXT_PUBLIC_API_URL=http://192.168.20.15:8140
+      - NEXT_PUBLIC_API_URL=https://bbmind.brbjr.com/api
       - API_INTERNAL_URL=http://mem0:8000
       - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:3020}
       - NEXT_PUBLIC_INSTANCE_NAME=Mem0
