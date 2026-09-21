@@ -5,6 +5,7 @@ services:
     build:
       context: ..
       dockerfile: server/dev.Dockerfile
+    restart: unless-stopped
     ports:
       - "8140:8000"
     extra_hosts:
@@ -33,7 +34,7 @@ services:
 
   postgres:
       image: pgvector/pgvector:pg17
-      restart: on-failure
+      restart: unless-stopped
       shm_size: "128mb"
       networks:
         - mem0_network
@@ -49,10 +50,11 @@ services:
         - postgres_db:/var/lib/postgresql/data
         - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
       ports:
-        - "8432:5432"
+        - "127.0.0.1:8432:5432"
 
   mem0-dashboard:
     build: ./dashboard
+    restart: unless-stopped
     ports:
       - "3020:3000"
     networks:
