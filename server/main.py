@@ -117,6 +117,49 @@ HISTORY_DB_PATH = os.environ.get("HISTORY_DB_PATH", "/app/history/history.db")
 DEFAULT_LLM_MODEL = os.environ.get("MEM0_DEFAULT_LLM_MODEL", "gpt-5-mini")
 DEFAULT_EMBEDDER_MODEL = os.environ.get("MEM0_DEFAULT_EMBEDDER_MODEL", "text-embedding-3-small")
 
+# Which bundled provider to boot with. Defaults to "openai" (unchanged
+# behavior); set both to "ollama" for a fully self-hosted, no-cloud-API-key
+# boot. Switching to a different bundled provider after boot is also always
+# possible via POST /configure -- these env vars just control what the
+# *first* boot uses, so it doesn't crash for lack of an OpenAI key when the
+# operator never intends to use OpenAI at all.
+DEFAULT_LLM_PROVIDER = os.environ.get("MEM0_LLM_PROVIDER", "openai")
+DEFAULT_EMBEDDER_PROVIDER = os.environ.get("MEM0_EMBEDDER_PROVIDER", "openai")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+# nomic-embed-text is 768-dim; OpenAI's text-embedding-3-small is 1536.
+# Must match whatever embedder is actually configured, or pgvector inserts
+# fail with a dimension mismatch.
+EMBEDDING_MODEL_DIMS = int(os.environ.get("MEM0_EMBEDDING_MODEL_DIMS", "1536"))
+
+
+def _llm_config() -> Dict[str, Any]:
+    if DEFAULT_LLM_PROVIDER == "ollama":
+        return {
+            "provider": "ollama",
+            "config": {"model": DEFAULT_LLM_MODEL, "ollama_base_url": OLLAMA_BASE_URL, "temperature": 0.2},
+        }
+    return {
+        "provider": DEFAULT_LLM_PROVIDER,
+        "config": {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": DEFAULT_LLM_MODEL},
+    }
+
+
+def _embedder_config() -> Dict[str, Any]:
+    if DEFAULT_EMBEDDER_PROVIDER == "ollama":
+        return {
+            "provider": "ollama",
+            "config": {
+                "model": DEFAULT_EMBEDDER_MODEL,
+                "ollama_base_url": OLLAMA_BASE_URL,
+                "embedding_dims": EMBEDDING_MODEL_DIMS,
+            },
+        }
+    return {
+        "provider": DEFAULT_EMBEDDER_PROVIDER,
+        "config": {"api_key": OPENAI_API_KEY, "model": DEFAULT_EMBEDDER_MODEL},
+    }
+
+
 DEFAULT_CONFIG = {
     "version": "v1.1",
     "vector_store": {
@@ -128,13 +171,11 @@ DEFAULT_CONFIG = {
             "user": POSTGRES_USER,
             "password": POSTGRES_PASSWORD,
             "collection_name": POSTGRES_COLLECTION_NAME,
+            "embedding_model_dims": EMBEDDING_MODEL_DIMS,
         },
     },
-    "llm": {
-        "provider": "openai",
-        "config": {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": DEFAULT_LLM_MODEL},
-    },
-    "embedder": {"provider": "openai", "config": {"api_key": OPENAI_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}},
+    "llm": _llm_config(),
+    "embedder": _embedder_config(),
     "history_db_path": HISTORY_DB_PATH,
 }
 
