@@ -1,4 +1,4 @@
-name: mem0-dev
+name: mem0
 
 services:
   mem0:
@@ -75,6 +75,8 @@ services:
 
 volumes:
   postgres_db:
+    external: true
+    name: mem0-dev_postgres_db
 
 networks:
   mem0_network:
