@@ -8,13 +8,16 @@ Three commits on `main`, in order:
 1. `feat(server): bundle ollama as an LLM/embedder provider` — adds `ollama` to `server/requirements.txt` and to `BUNDLED_LLM_PROVIDERS`/`BUNDLED_EMBEDDER_PROVIDERS` in `server/main.py`. The underlying `mem0` SDK already implements Ollama support; upstream's server just didn't allow selecting it.
 2. `feat(server): make default LLM/embedder provider selectable via env` — `DEFAULT_CONFIG`'s provider was hardcoded to `"openai"`, which crashes the container at boot (the `OpenAI()` client raises eagerly on a missing key) if you never intend to use OpenAI. Added `MEM0_LLM_PROVIDER`/`MEM0_EMBEDDER_PROVIDER`/`MEM0_EMBEDDING_MODEL_DIMS` env vars so a fully-Ollama boot works without ever touching OpenAI.
 3. `fix(server): add restart policies, restrict postgres to localhost` — `mem0` and `mem0-dashboard` had no restart policy at all; Postgres's port was open to the whole LAN for no reason.
+4. `fix(server): DASHBOARD_URL was hardcoded, overriding .env silently` — `mem0`'s `environment:` block hardcoded `DASHBOARD_URL=http://localhost:3020` literally, silently ignoring `.env`'s value regardless of what it said. Now interpolated from `.env`.
+5. `fix(server): pass DASHBOARD_URL to the dashboard container itself` — the dashboard's own server-side `/api/auth/refresh` route reads `process.env.DASHBOARD_URL` to decide whether the session cookie should be `Secure`, but that var was never passed to the `mem0-dashboard` service at all — only to `mem0`. It silently fell back to `NODE_ENV === "production"` (true), always marking the cookie `Secure`, which browsers refuse to store over plain HTTP. This caused logins to appear to succeed (real 200, real tokens) while silently never actually persisting a session — an immediate bounce back to `/login?next=...` on the next navigation. Root-caused by hand-simulating the full browser login flow (login → the dashboard's own cookie-set call) and inspecting the raw `Set-Cookie` header.
+6. `feat(server): point dashboard/CORS at the public bbmind.brbjr.com domain` — see "Public exposure" below.
 
 ## Current deployment
 
 - Directory: `/mnt/user/appdata/mem0` (this repo, root = compose build context's parent via `server/docker-compose.yaml`'s `context: ..`)
 - Run from `server/`: `docker compose up -d --build`
-- API: `http://localhost:8140` (remapped from upstream's default 8888 — that port was taken by another container on this host)
-- Dashboard: `http://localhost:3020` (remapped from 3000, same reason)
+- API: `http://localhost:8140` (remapped from upstream's default 8888 — that port was taken by another container on this host); also reachable publicly as `https://bbmind.brbjr.com/api/*` (see "Public exposure" below).
+- Dashboard: `http://localhost:3020` (remapped from 3000, same reason); the primary access path is now `https://bbmind.brbjr.com` — see below, direct LAN-IP access to the dashboard no longer fully works for login.
 - Postgres: `127.0.0.1:8432` only (not LAN-reachable)
 - **LLM/embedder: fully local Ollama**, not OpenAI. `qwen3:4b` was tried first for extraction and was too weak to reliably follow mem0's structured-extraction prompt (returned empty results on clear, extractable facts); `qwen3:8b` works correctly. `nomic-embed-text` for embeddings (768-dim, matches `MEM0_EMBEDDING_MODEL_DIMS=768` in `.env`).
 - Ollama reached via `host.docker.internal` (the `ollama` container is on the default bridge network, not shared with this compose stack, and doesn't support container-name DNS resolution anyway) — same fix `bbmind` needed.
@@ -24,7 +27,7 @@ Three commits on `main`, in order:
 ## Scope decision (this session)
 
 - **Single-user**, not multi-user/family. The original ask was a family "second brain," but real multi-user security here would require per-person API keys/accounts that are actually *restricted* to their own `user_id` server-side — verified this isn't automatically enforced (any caller holding an API key can pass any `user_id` in a request) and that work was never done. If family use comes back later, that restriction needs building/verifying before treating per-user scoping as real security, not just data organization.
-- **Public exposure: none yet.** Explicitly deferred putting this behind NPM+SSL — LAN-only for now, revisit after the MCP workflow proves out over real use.
+- **Public exposure: live**, reusing the existing `bbmind.brbjr.com` NPM proxy host (ID 71, previously pointed at the now-superseded `bbmind` app) and its existing Let's Encrypt certificate (ID 81) — no new cert needed. Root `/` → dashboard (`192.168.20.15:3020`); `/api/` → API (`192.168.20.15:8140`, prefix stripped via `proxy_pass http://192.168.20.15:8140/;`'s trailing slash in a Custom Location). `NEXT_PUBLIC_API_URL`/`DASHBOARD_URL` point at this domain now, so dashboard and API are effectively same-origin from the browser's perspective (no more CORS in practice, since both live under one domain). **Trade-off:** direct LAN-IP dashboard access (`http://192.168.20.15:3020`) no longer fully works for login — the bundled JS calls the public HTTPS API URL specifically. Access is via the public domain from any device except this Docker host itself (hairpin NAT isn't supported by the router here, confirmed identical to the sibling `bbhealth` deployment's known issue — testing must happen from another LAN device or the internet, not from a shell on this box).
 
 ## Claude Code integration
 
@@ -39,7 +42,7 @@ Three commits on `main`, in order:
 
 ## Known gaps / next steps
 
-- Restart Claude Code and verify `/mcp` shows `mem0-bridge` connected; test `add_memory`/`search_memory` from a real session (not just the scripted stdio test done during setup).
-- No NPM/SSL exposure yet (deliberate, see above).
+- MCP bridge confirmed connected after a Claude Code restart (`mcp__mem0-bridge__*` tools visible); not yet exercised end-to-end in a real coding session, only the scripted stdio test done during setup.
+- Public login confirmed working (dashboard + API, real browser test, both bugs above found and fixed this way) — but only tested via the box's own curl-simulated flow and the user's own browser from the LAN/public domain; not yet tested from an actual external (off-LAN) device.
 - No backup strategy for the Postgres volume (`mem0-dev_postgres_db`) — worth adding to whatever backup routine covers the rest of this box's appdata.
-- `bbmind`'s fate undecided.
+- `bbmind`'s fate undecided — its own NPM entry (`bbmind.brbjr.com`, ID 71) was repointed to this mem0 deployment in this session, so `bbmind` the app no longer has a public URL of its own. It's still running on the LAN at `192.168.20.15:8130` but effectively superseded.
